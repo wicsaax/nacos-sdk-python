@@ -46,7 +46,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DEBUG = False
-VERSION = "0.1.11"
+VERSION = "0.1.14"
 
 DEFAULT_GROUP_NAME = "DEFAULT_GROUP"
 DEFAULT_NAMESPACE = ""
@@ -214,6 +214,8 @@ def parse_nacos_server_addr(server_addr):
     sp = server_addr.split(":")
     if len(sp) == 3:
         return sp[0] + ":" + sp[1], int(sp[2])
+    elif len(sp) == 2 and server_addr.startswith("http://"):
+        return server_addr,None
     else:
         port = int(sp[1]) if len(sp) > 1 else 8848
         return sp[0], port
@@ -633,10 +635,12 @@ class NacosClient:
             key_list = self.process_mgr.list()
             key_list.append(cache_key)
             sys_os = platform.system()
+            if sys_os == 'Windows' or sys_os == 'Darwin':
+                puller = Thread(target=self._do_pulling, args=(key_list, self.notify_queue))
+            else:
+                puller = Process(target=self._do_pulling, args=(key_list, self.notify_queue))
 
-            puller = Thread(target=self._do_pulling, args=(key_list, self.notify_queue))
-            puller.setDaemon(True)
-
+            puller.daemon = True
             puller.start()
             self.puller_mapping[cache_key] = (puller, key_list)
 
@@ -697,7 +701,10 @@ class NacosClient:
                     logger.error("[do-sync-req] can not get one server.")
                     raise NacosRequestException("Server is not available.")
                 address, port = server_info
-                server = ":".join([address, str(port)])
+                if port is None:
+                    server = address
+                else:
+                    server = ":".join([address, str(port)])
                 server_url = server
                 if not server_url.startswith("http"):
                     server_url = "%s://%s" % ("http", server)
